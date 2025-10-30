@@ -10,12 +10,12 @@ Prices move automatically. Fortunes rise and fall. You might become the richest 
 
 ## 🧾 Features
 
-- 💹 **Dynamic Market** – Stock prices shift automatically based on random market behavior.  
-- ⚠️ **Risk System** – Each stock has a volatility rating: `Low`, `Moderate`, or `High`.  
-- 💰 **Trading System** – Buy and sell stocks using in-game cash. Build your portfolio or go broke trying.  
-- 📊 **Leaderboards** – See who’s ruling the market (and who’s in debt).  
-- 👥 **Player Trading** – Trade directly with other users.  
-- 🛠️ **Admin Tools** – Server admins can add/remove stocks, trigger market crashes, and tweak settings.  
+-  **Dynamic Market** – Stock prices shift automatically based on random market behavior.  
+-  **Risk System** – Each stock has a volatility rating: `Low`, `Moderate`, or `High`.  
+-  **Trading System** – Buy and sell stocks using in-game cash. Build your portfolio or go broke trying.  
+-  **Leaderboards** – See who’s ruling the market (and who’s in debt).  
+-  **Player Trading** – Trade directly with other users.  
+-  **Admin Tools** – Server admins can add/remove stocks, trigger market crashes, and tweak settings.  
 
 ---
 
