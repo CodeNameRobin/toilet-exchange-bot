@@ -109,4 +109,4 @@ python bot.py
 
 Website: https://toilet-exchange.neocities.org
 
-Invite the Bot:  [![Invite The Toilet Exchange](https://img.shields.io/badge/Invite-The_Toilet_Exchange-5865F2?logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1430687583041748994&permissions=311385517136&integration_type=0&scope=bot+applications.commands)
+
