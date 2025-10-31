@@ -1,4 +1,4 @@
-# market.py
+# cogs/market.py
 import random
 import aiosqlite
 import matplotlib.pyplot as plt
@@ -13,102 +13,123 @@ from utils.logger import log_error
 class Market(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.update_market_loop.start()  # renamed for clarity
+        self._last_market_update = {}
+        self.update_market_loop.start()
 
     def cog_unload(self):
         self.update_market_loop.cancel()
 
     async def cog_command_error(self, ctx, error):
         from utils.errors import WrongChannel
-
-        # Ignore wrong channel or DM errors silently
         if isinstance(error, WrongChannel):
             return
-
-        # Log everything else
         await log_error(self.__class__.__name__, error, ctx)
-        await ctx.send("An internal error occurred. The issue has been logged.")
+        await ctx.send("⚠️ An internal error occurred. The issue has been logged.")
 
+    # -------------------------------------------------
+    # MARKET LOOP — runs once per minute to *check* hourly updates
+    # -------------------------------------------------
     @tasks.loop(minutes=1)
     async def update_market_loop(self):
-        """Dynamically update market prices per guild based on server settings."""
+        """Update prices for each guild independently (hour-based schedule)."""
         now = discord.utils.utcnow()
-
-        # Loop through all guilds
         for guild in self.bot.guilds:
             try:
                 settings = await get_server_settings(guild.id)
-                rate = int(settings.get("market_update_rate", 10))  # minutes
-                last = getattr(self, "_last_market_update", {})
+                rate = int(settings.get("market_update_rate", 1))  # now represents hours
+                last = self._last_market_update.get(guild.id)
 
-                # Check if enough time passed for this guild
-                if guild.id not in last or (now - last[guild.id]).total_seconds() >= rate * 60:
-                    await self._update_prices_for_guild(guild)
-                    last[guild.id] = now
-                    print(f"[Market] Prices updated for {guild.name} ({rate} min interval)")
-                self._last_market_update = last
-
+                if not last or (now - last).total_seconds() >= rate * 3600:
+                    await self._update_prices_for_guild(guild, settings)
+                    self._last_market_update[guild.id] = now
+                    print(f"[Market] Updated prices for {guild.name} (every {rate} hour{'s' if rate != 1 else ''})")
             except Exception as e:
-                print(f"[Market] Error updating market for {guild.name}: {e}")
-
-    async def _update_prices_for_guild(self, guild):
-        """Update stock prices in the shared database."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            cur = await db.execute("SELECT ticker, price FROM stocks")
-            stocks = await cur.fetchall()
-            cur = await db.execute("SELECT ticker, price, risk FROM stocks")
-            stocks = await cur.fetchall()
-
-            for ticker, price, risk in stocks:
-                low, high = get_price_change_range(risk)
-                change = price * random.uniform(low, high)
-                new_price = max(price + change, 0.01)  # prevent zero
-                await db.execute(
-                    "UPDATE stocks SET price=? WHERE ticker=?", (new_price, ticker)
-                )
-                await db.execute(
-                    "INSERT INTO price_history (ticker, price) VALUES (?, ?)",
-                    (ticker, new_price),
-                )
-            await db.commit()
+                print(f"[Market] Error updating {guild.name}: {e}")
 
     @update_market_loop.before_loop
     async def before_update_market_loop(self):
         await self.bot.wait_until_ready()
 
-    # -----------------------------
-    # Manual / Info Commands
-    # -----------------------------
+    # -------------------------------------------------
+    # PRICE UPDATE PER GUILD
+    # -------------------------------------------------
+    async def _update_prices_for_guild(self, guild, settings):
+        """Update stock prices for a specific guild and notify the #toilet-exchange channel."""
+        guild_id = str(guild.id)
 
-    @commands.command()
-    async def price(self, ctx, ticker: str):
-        """List price of a specific stock."""
         async with aiosqlite.connect(DB_PATH) as db:
             cur = await db.execute(
-                "SELECT price FROM stocks WHERE ticker=?", (ticker.upper(),)
+                "SELECT ticker, price, risk FROM stocks WHERE guild_id=?", (guild_id,)
+            )
+            stocks = await cur.fetchall()
+
+            for ticker, price, risk in stocks:
+                low, high = get_price_change_range(risk)
+                raw_change = random.uniform(low, high)
+                mean_bias = float(settings.get("market_bias", 0.0008))
+                target_price = float(settings.get("target_price", 100.0))
+                recovery_boost = 1.5 + (1.0 - price) if price < 1.0 else 1.0
+                bias_adjusted = raw_change + mean_bias * ((target_price - price) / target_price)
+                final_change = price * bias_adjusted * recovery_boost
+                new_price = max(price + final_change, 0.01)
+
+                await db.execute(
+                    "UPDATE stocks SET price=? WHERE ticker=? AND guild_id=?",
+                    (new_price, ticker, guild_id),
+                )
+                await db.execute(
+                    "INSERT INTO price_history (ticker, guild_id, price) VALUES (?, ?, ?)",
+                    (ticker, guild_id, new_price),
+                )
+
+            await db.commit()
+
+        # ✅ Send a simple notice once per update
+        channel = discord.utils.get(guild.text_channels, name="toilet-exchange")
+        if channel:
+            try:
+                await channel.send("📈 The market has been updated! Check new prices with `!stocks`.")
+            except discord.Forbidden:
+                print(f"[Market] Missing permission to send message in {guild.name}.")
+            except Exception as e:
+                print(f"[Market] Error sending update message in {guild.name}: {e}")
+
+    # -------------------------------------------------
+    # COMMANDS
+    # -------------------------------------------------
+    @commands.command()
+    async def price(self, ctx, ticker: str):
+        """Get price for a stock."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            cur = await db.execute(
+                "SELECT price FROM stocks WHERE ticker=? AND guild_id=?",
+                (ticker.upper(), str(ctx.guild.id)),
             )
             row = await cur.fetchone()
-            if not row:
-                return await ctx.send("Invalid stock ticker.")
-            await ctx.send(f"{ticker.upper()} price: ${row[0]:.2f}")
+        if not row:
+            return await ctx.send("Invalid stock ticker.")
+        await ctx.send(f"{ticker.upper()} price: ${row[0]:.2f}")
 
     @commands.command(name="stocks")
     async def list_stocks(self, ctx):
+        """Show all active stocks for this guild."""
         async with aiosqlite.connect(DB_PATH) as db:
-            cur = await db.execute("SELECT ticker, name, price, risk FROM stocks")
+            cur = await db.execute(
+                "SELECT ticker, name, price, risk FROM stocks WHERE guild_id=?",
+                (str(ctx.guild.id),),
+            )
             rows = await cur.fetchall()
 
         if not rows:
-            return await ctx.send("No stocks found.")
+            return await ctx.send("No stocks found in this market.")
 
         embed = discord.Embed(
-            title="📈 Market Overview",
-            description="Recent stock movements:",
+            title=f"📈 {ctx.guild.name} Market Overview",
             color=discord.Color.blurple(),
         )
 
         for ticker, name, price, risk in rows:
-            avg = await get_moving_average(ticker, window=5)
+            avg = await get_moving_average(ticker, ctx.guild.id, window=5)
             if not avg:
                 change = "🟦 No data"
             elif price > avg:
@@ -128,26 +149,26 @@ class Market(commands.Cog):
 
     @commands.command(name="trend")
     async def show_trend(self, ctx, *tickers):
-        """Show a line chart of recent price changes for one or more stocks (or all)."""
+        """Show line chart of recent prices (per server)."""
         if not tickers:
-            return await ctx.send("Please specify at least one ticker, or use `!trend all`.")
+            return await ctx.send("Please specify at least one ticker or use `!trend all`.")
 
         tickers = [t.upper() for t in tickers]
+        guild_id = str(ctx.guild.id)
 
-        # Handle 'all'
         if len(tickers) == 1 and tickers[0].lower() == "all":
             async with aiosqlite.connect(DB_PATH) as db:
-                cur = await db.execute("SELECT ticker FROM stocks")
+                cur = await db.execute("SELECT ticker FROM stocks WHERE guild_id=?", (guild_id,))
                 tickers = [r[0] for r in await cur.fetchall()]
             if not tickers:
-                return await ctx.send("No stocks found in the market.")
+                return await ctx.send("No stocks found in this market.")
 
+        data = {}
         async with aiosqlite.connect(DB_PATH) as db:
-            data = {}
             for ticker in tickers:
                 cur = await db.execute(
-                    "SELECT price FROM price_history WHERE ticker=? ORDER BY id DESC LIMIT 20",
-                    (ticker,),
+                    "SELECT price FROM price_history WHERE ticker=? AND guild_id=? ORDER BY id DESC LIMIT 20",
+                    (ticker, guild_id),
                 )
                 rows = await cur.fetchall()
                 if rows:
@@ -156,37 +177,29 @@ class Market(commands.Cog):
         if not data:
             return await ctx.send("No recent data found for the given tickers.")
 
-        # Normalize for fair comparison
-        normalized_data = {}
+        plt.figure(figsize=(6, 4))
         for ticker, prices in data.items():
             base = prices[0]
-            normalized_data[ticker] = [p / base * 100 for p in prices]
+            norm = [p / base * 100 for p in prices]
+            plt.plot(norm, marker="o", linewidth=2, label=ticker)
 
-        # Plot the data
-        plt.figure(figsize=(6, 4))
-        for ticker, prices in normalized_data.items():
-            plt.plot(prices, marker="o", linewidth=2, label=ticker)
-
-        plt.title("Stock Trend Comparison (Normalized)")
+        plt.title(f"{ctx.guild.name} Market Trend (Normalized)")
         plt.xlabel("Most Recent Updates")
         plt.ylabel("Relative Price (%)")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
 
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format="png")
-        buffer.seek(0)
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
         plt.close()
 
-        file = discord.File(buffer, filename="trend.png")
-        embed = discord.Embed(
-            title="📈 Stock Trend Comparison",
-            description=f"Comparing {', '.join(tickers)}",
-            color=discord.Color.blurple(),
-        )
+        file = discord.File(buf, filename="trend.png")
+        embed = discord.Embed(title="📈 Market Trends", color=discord.Color.blurple())
         embed.set_image(url="attachment://trend.png")
         await ctx.send(file=file, embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Market(bot))

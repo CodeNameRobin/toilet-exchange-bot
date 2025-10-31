@@ -2,67 +2,69 @@
 import discord
 from discord.ext import commands
 import aiosqlite
-from utils.database import DB_PATH, get_stock_price, get_user, update_balance, record_trade
+from utils.database import DB_PATH, get_user, update_balance, record_trade
 from utils.helpers import resolve_member
 from utils.logger import log_error
 
-# In-memory trades: {initiator_id: {...data...}}
+# Active trades tracked per guild to prevent cross-server mixups
+# Structure: {guild_id: {initiator_id: trade_data}}
 active_trades = {}
 
+
 class PlayerTrading(commands.Cog):
-    """Public person-to-person trading system in #toilet-exchange."""
+    """Person-to-person trading system (guild-specific)."""
 
     def __init__(self, bot):
         self.bot = bot
 
-    async def _check_channel(self, ctx):
-        return ctx.channel.name == "toilet-exchange"
-
+    # --------------------------
+    # Error handling
+    # --------------------------
     async def cog_command_error(self, ctx, error):
         from utils.errors import WrongChannel
-
-        # Ignore wrong channel or DM errors silently
         if isinstance(error, WrongChannel):
             return
-
-        # Log everything else
         await log_error(self.__class__.__name__, error, ctx)
-        await ctx.send("An internal error occurred. The issue has been logged.")
+        await ctx.send("⚠️ An internal error occurred. The issue has been logged.")
+
+    # --------------------------
+    # Channel check
+    # --------------------------
+    async def _check_channel(self, ctx):
+        return ctx.channel.name == "toilet-exchange"
 
     # --------------------------
     # start_trade / cancel
     # --------------------------
     @commands.command(name="start_trade")
     async def start_trade(self, ctx, target: str = None):
-        """Start a trade or cancel one.
-        - !start_trade all      → open to anyone
-        - !start_trade @user    → targeted
-        - !start_trade username → targeted (partial or full)
-        - !start_trade cancel   → cancel your trade
-        """
+        """Start a trade or cancel one."""
         if not await self._check_channel(ctx):
             return await ctx.send("❌ Trades must happen in #toilet-exchange")
 
+        guild_id = ctx.guild.id
         user_id = ctx.author.id
+        guild_trades = active_trades.setdefault(guild_id, {})
 
         # Cancel trade
         if target and target.lower() == "cancel":
-            if user_id not in active_trades:
+            if user_id not in guild_trades:
                 return await ctx.send("❌ You have no active trade to cancel.")
-            partner_id = active_trades[user_id].get("partner_id")
-            msg = active_trades[user_id].get("message")
+            trade = guild_trades.pop(user_id)
+            partner_id = trade.get("partner_id")
+            if partner_id:
+                guild_trades.pop(partner_id, None)
+            msg = trade.get("message")
             if msg:
                 await msg.edit(embed=self._trade_embed("❌ Trade cancelled.", color=discord.Color.red()))
-            for uid in [user_id, partner_id]:
-                active_trades.pop(uid, None)
             return await ctx.send("🟥 Trade cancelled.")
 
-        # Already trading
-        if user_id in active_trades:
+        # Prevent duplicate
+        if user_id in guild_trades:
             return await ctx.send("⚠️ You already have an active trade.")
 
+        # Resolve target
         partner = None
-        # Resolve the target (mention or name)
         if target and target.lower() not in ("all", "cancel"):
             partner = await resolve_member(self.bot, ctx, target)
             if not partner:
@@ -80,34 +82,35 @@ class PlayerTrading(commands.Cog):
             "message": None,
         }
 
-        # Send message
         embed = self._trade_embed(
             f"🟢 Trade started by **{ctx.author.display_name}**\n"
-            f"{'Waiting for ' + partner.display_name if partner else 'Open to anyone — type `!trade_accept` to accept this trade.'}\n\n"
+            f"{'Waiting for ' + partner.display_name if partner else 'Open to anyone — type `!trade_accept` to join.'}\n\n"
             "Once both users have joined:\n"
-            "• Use `!trade 100` to offer cash\n"
-            "• Use `!trade TICKER #` to offer stocks\n"
-            "• When both are satisfied, use `!accept` or use '!deny'\n"
-            "• To cancel, use `!start_trade cancel`"
+            "• `!trade 100` to offer cash\n"
+            "• `!trade TICKER #` to offer stocks\n"
+            "• `!accept` to finalize or `!deny` to cancel."
         )
         msg = await ctx.send(embed=embed)
         trade_data["message"] = msg
-        active_trades[user_id] = trade_data
+        guild_trades[user_id] = trade_data
         await ctx.send("✅ Trade created!")
 
     # --------------------------
-    # trade_start (accept)
+    # Accept trade
     # --------------------------
     @commands.command(name="trade_accept")
-    async def trade_start(self, ctx):
+    async def trade_accept(self, ctx):
         """Join someone’s open or targeted trade."""
         if not await self._check_channel(ctx):
             return await ctx.send("❌ Trades must happen in #toilet-exchange")
 
+        guild_id = ctx.guild.id
         user_id = ctx.author.id
-        target_trade = None
+        guild_trades = active_trades.get(guild_id, {})
 
-        for uid, trade in active_trades.items():
+        # Find a pending trade for this guild
+        target_trade = None
+        for uid, trade in guild_trades.items():
             if trade["status"] == "pending":
                 if trade["mode"] == "open" and trade["partner_id"] is None:
                     target_trade = uid
@@ -120,13 +123,13 @@ class PlayerTrading(commands.Cog):
             return await ctx.send("❌ No open trade found for you to join.")
 
         initiator_id = target_trade
-        trade = active_trades[initiator_id]
+        trade = guild_trades[initiator_id]
         if initiator_id == user_id:
             return await ctx.send("❌ You can’t accept your own trade.")
 
         trade["partner_id"] = user_id
         trade["status"] = "active"
-        active_trades[user_id] = trade
+        guild_trades[user_id] = trade
 
         initiator = ctx.guild.get_member(initiator_id)
         partner = ctx.author
@@ -135,28 +138,24 @@ class PlayerTrading(commands.Cog):
         await ctx.send("✅ Trade started!")
 
     # --------------------------
-    # trade (offer)
+    # Offer
     # --------------------------
     @commands.command(name="trade")
     async def trade(self, ctx, *args):
-        """Offer something:
-        - !trade 100 → offer $100
-        - !trade GMD 2 → offer 2 GMD stocks
-        """
+        """Offer money or stocks in an active trade."""
         if not await self._check_channel(ctx):
             return await ctx.send("❌ Trades must happen in #toilet-exchange")
 
+        guild_id = ctx.guild.id
         user_id = ctx.author.id
-        if user_id not in active_trades:
+        guild_trades = active_trades.get(guild_id, {})
+
+        if user_id not in guild_trades:
             return await ctx.send("❌ You’re not in a trade.")
+        trade = guild_trades[user_id]
 
-        trade = active_trades[user_id]
-        partner_id = trade["partner_id"]
-        if not partner_id:
-            return await ctx.send("⚠️ No partner yet. Wait for someone to join.")
-
-        # Figure out which side this user is
-        trade_key = "initiator_offer" if list(active_trades.keys())[0] == user_id else "partner_offer"
+        initiator_id = [k for k, v in guild_trades.items() if v == trade][0]
+        trade_key = "initiator_offer" if initiator_id == user_id else "partner_offer"
 
         if len(args) == 1 and args[0].isdigit():
             cash = int(args[0])
@@ -166,55 +165,61 @@ class PlayerTrading(commands.Cog):
             ticker, qty_str = args
             if not qty_str.isdigit():
                 return await ctx.send("❌ Quantity must be a number.")
-            qty = int(qty_str)
-            trade[trade_key]["stocks"][ticker.upper()] = qty
-            msg = f"📊 {ctx.author.display_name} now offers {qty} × {ticker.upper()}."
+            trade[trade_key]["stocks"][ticker.upper()] = int(qty_str)
+            msg = f"📊 {ctx.author.display_name} now offers {qty_str} × {ticker.upper()}."
         else:
             return await ctx.send("❌ Usage: `!trade 100` or `!trade GMD 2`")
 
-        embed = await self._build_trade_embed(ctx.guild, trade)
+        embed = await self._build_trade_embed(ctx.guild, guild_trades, trade)
         await trade["message"].edit(embed=embed)
         await ctx.send(msg)
 
     # --------------------------
-    # accept / deny
+    # Accept / Deny
     # --------------------------
     @commands.command(name="accept")
     async def accept(self, ctx):
-        """Accept current trade."""
+        """Accept a trade once both offers are ready."""
         if not await self._check_channel(ctx):
             return await ctx.send("❌ Trades must happen in #toilet-exchange")
 
+        guild_id = ctx.guild.id
         user_id = ctx.author.id
-        if user_id not in active_trades:
+        guild_trades = active_trades.get(guild_id, {})
+        if user_id not in guild_trades:
             return await ctx.send("❌ You’re not in a trade.")
-        trade = active_trades[user_id]
+
+        trade = guild_trades[user_id]
         trade.setdefault("accepts", set()).add(user_id)
         partner_id = trade["partner_id"]
 
         if len(trade["accepts"]) == 2:
             await self._finalize_trade(ctx.guild, trade)
             for uid in [user_id, partner_id]:
-                active_trades.pop(uid, None)
+                guild_trades.pop(uid, None)
         else:
-            embed = self._trade_embed(f"✅ {ctx.author.display_name} accepted the trade.\nWaiting for other party...")
+            embed = self._trade_embed(f"✅ {ctx.author.display_name} accepted the trade.\nWaiting for the other party...")
             await trade["message"].edit(embed=embed)
 
     @commands.command(name="deny")
     async def deny(self, ctx):
-        """Deny trade."""
+        """Deny or cancel a trade."""
         if not await self._check_channel(ctx):
             return await ctx.send("❌ Trades must happen in #toilet-exchange")
 
+        guild_id = ctx.guild.id
         user_id = ctx.author.id
-        if user_id not in active_trades:
+        guild_trades = active_trades.get(guild_id, {})
+
+        if user_id not in guild_trades:
             return await ctx.send("❌ You’re not in a trade.")
-        trade = active_trades[user_id]
+        trade = guild_trades.pop(user_id)
         partner_id = trade.get("partner_id")
+        if partner_id:
+            guild_trades.pop(partner_id, None)
+
         embed = self._trade_embed("❌ Trade denied.", color=discord.Color.red())
         await trade["message"].edit(embed=embed)
-        for uid in [user_id, partner_id]:
-            active_trades.pop(uid, None)
         await ctx.send("Trade cancelled.")
 
     # --------------------------
@@ -223,11 +228,12 @@ class PlayerTrading(commands.Cog):
     def _trade_embed(self, text, color=discord.Color.blurple()):
         return discord.Embed(description=text, color=color)
 
-    async def _build_trade_embed(self, guild, trade):
-        initiator = guild.get_member([k for k in active_trades.keys() if active_trades[k] == trade][0])
+    async def _build_trade_embed(self, guild, guild_trades, trade):
+        initiator_id = [k for k, v in guild_trades.items() if v == trade][0]
+        initiator = guild.get_member(initiator_id)
         partner = guild.get_member(trade["partner_id"])
-        io = trade["initiator_offer"]
-        po = trade["partner_offer"]
+        io, po = trade["initiator_offer"], trade["partner_offer"]
+
         embed = discord.Embed(title="💱 Active Trade", color=discord.Color.gold())
         embed.add_field(name=f"{initiator.display_name}'s Offer", value=self._format_offer(io), inline=True)
         embed.add_field(name=f"{partner.display_name}'s Offer", value=self._format_offer(po), inline=True)
@@ -235,151 +241,101 @@ class PlayerTrading(commands.Cog):
         return embed
 
     def _format_offer(self, offer):
-        out = []
+        items = []
         if offer["cash"]:
-            out.append(f"${offer['cash']}")
+            items.append(f"${offer['cash']:,}")
         for t, q in offer["stocks"].items():
-            out.append(f"{q} × {t}")
-        return "\n".join(out) if out else "Nothing"
+            items.append(f"{q} × {t}")
+        return "\n".join(items) if items else "Nothing"
 
     async def _finalize_trade(self, guild, trade):
-        """Finalize trade by verifying assets and updating both users' portfolios and balances."""
-        initiator = guild.get_member([k for k in active_trades.keys() if active_trades[k] == trade][0])
+        """Finalize trade safely per guild."""
+        initiator = guild.get_member([k for k, v in active_trades[guild.id].items() if v == trade][0])
         partner = guild.get_member(trade["partner_id"])
-
-        io = trade["initiator_offer"]
-        po = trade["partner_offer"]
-
         if not initiator or not partner:
             return
 
-        # ----------------------------------------------------------
-        # 🧾 Helper functions
-        # ----------------------------------------------------------
-        async def user_owns_stock(user_id, guild_id, ticker, qty):
+        io, po = trade["initiator_offer"], trade["partner_offer"]
+        guild_id = guild.id
+
+        # Validate cash and stock ownership
+        async def owns_stock(uid, t, q):
             async with aiosqlite.connect(DB_PATH) as db:
                 cur = await db.execute("""
                     SELECT SUM(CASE WHEN side='BUY' THEN qty ELSE -qty END)
                     FROM trades
                     WHERE user_id=? AND guild_id=? AND ticker=?
-                """, (str(user_id), str(guild_id), ticker))
+                """, (str(uid), str(guild_id), t))
                 row = await cur.fetchone()
-                owned = row[0] or 0
-                return owned >= qty
+                return (row[0] or 0) >= q
 
-        async def get_cash_balance(user_id, guild_id):
-            user = await get_user(user_id, guild_id)
-            return float(user[1]) if user else 0.0
-
-        # ----------------------------------------------------------
-        # 🔍 Verify stock ownership
-        # ----------------------------------------------------------
         for ticker, qty in io["stocks"].items():
-            if qty > 0:
-                owns = await user_owns_stock(initiator.id, guild.id, ticker, qty)
-                if not owns:
-                    await self._trade_fail(trade, f"{initiator.display_name} tried to trade {qty}×{ticker}, but doesn’t own enough.")
-                    return
-
+            if not await owns_stock(initiator.id, ticker, qty):
+                return await self._trade_fail(trade, f"{initiator.display_name} doesn’t own {qty}×{ticker}.")
         for ticker, qty in po["stocks"].items():
-            if qty > 0:
-                owns = await user_owns_stock(partner.id, guild.id, ticker, qty)
-                if not owns:
-                    await self._trade_fail(trade, f"{partner.display_name} tried to trade {qty}×{ticker}, but doesn’t own enough.")
-                    return
+            if not await owns_stock(partner.id, ticker, qty):
+                return await self._trade_fail(trade, f"{partner.display_name} doesn’t own {qty}×{ticker}.")
 
-        # ----------------------------------------------------------
-        # 💰 Verify cash balance
-        # ----------------------------------------------------------
-        initiator_balance = await get_cash_balance(initiator.id, guild.id)
-        partner_balance = await get_cash_balance(partner.id, guild.id)
+        # Handle cash
+        initiator_user = await get_user(initiator.id, guild_id)
+        partner_user = await get_user(partner.id, guild_id)
+        if not initiator_user or not partner_user:
+            return await self._trade_fail(trade, "One or both traders are not registered.")
 
-        if io["cash"] > initiator_balance:
-            await self._trade_fail(trade, f"{initiator.display_name} doesn’t have enough cash (${initiator_balance:.2f}).")
-            return
+        if io["cash"] > initiator_user[1]:
+            return await self._trade_fail(trade, f"{initiator.display_name} lacks funds.")
+        if po["cash"] > partner_user[1]:
+            return await self._trade_fail(trade, f"{partner.display_name} lacks funds.")
 
-        if po["cash"] > partner_balance:
-            await self._trade_fail(trade, f"{partner.display_name} doesn’t have enough cash (${partner_balance:.2f}).")
-            return
-
-        # ----------------------------------------------------------
-        # 1️⃣ CASH TRANSFERS
-        # ----------------------------------------------------------
-        net_cash = io["cash"] - po["cash"]  # positive = initiator pays partner
-
+        # Exchange cash
+        net_cash = io["cash"] - po["cash"]
         if net_cash != 0:
-            await update_balance(initiator.id, guild.id, -net_cash)
-            await update_balance(partner.id, guild.id, net_cash)
+            await update_balance(initiator.id, guild_id, -net_cash)
+            await update_balance(partner.id, guild_id, net_cash)
 
-        # ----------------------------------------------------------
-        # 2️⃣ STOCK TRANSFERS
-        # ----------------------------------------------------------
+        # Exchange stocks
         async with aiosqlite.connect(DB_PATH) as db:
             for ticker, qty in io["stocks"].items():
                 if qty > 0:
-                    await record_trade(initiator.id, guild.id, ticker, qty, "SELL")
-                    await record_trade(partner.id, guild.id, ticker, qty, "BUY")
-
+                    await record_trade(initiator.id, guild_id, ticker, qty, "SELL")
+                    await record_trade(partner.id, guild_id, ticker, qty, "BUY")
             for ticker, qty in po["stocks"].items():
                 if qty > 0:
-                    await record_trade(partner.id, guild.id, ticker, qty, "SELL")
-                    await record_trade(initiator.id, guild.id, ticker, qty, "BUY")
+                    await record_trade(partner.id, guild_id, ticker, qty, "SELL")
+                    await record_trade(initiator.id, guild_id, ticker, qty, "BUY")
 
-        # ----------------------------------------------------------
-        # 3️⃣ Update final embed
-        # ----------------------------------------------------------
-        embed = discord.Embed(
-            title="✅ Trade Complete!",
-            description=f"{initiator.display_name} and {partner.display_name} successfully completed a trade!",
-            color=discord.Color.green()
-        )
-
+        # Update message
         summary = []
         if io["cash"]:
             summary.append(f"💵 {initiator.display_name} sent ${io['cash']:,}")
         if po["cash"]:
             summary.append(f"💵 {partner.display_name} sent ${po['cash']:,}")
+        for t, q in io["stocks"].items():
+            summary.append(f"📈 {initiator.display_name} gave {q} × {t}")
+        for t, q in po["stocks"].items():
+            summary.append(f"📈 {partner.display_name} gave {q} × {t}")
 
-        for ticker, qty in io["stocks"].items():
-            if qty > 0:
-                summary.append(f"📈 {initiator.display_name} gave {qty} × {ticker}")
-        for ticker, qty in po["stocks"].items():
-            if qty > 0:
-                summary.append(f"📈 {partner.display_name} gave {qty} × {ticker}")
-
+        embed = discord.Embed(
+            title="✅ Trade Complete!",
+            description=f"{initiator.display_name} and {partner.display_name} successfully completed a trade!",
+            color=discord.Color.green()
+        )
         embed.add_field(name="Trade Summary", value="\n".join(summary) or "No items exchanged", inline=False)
         await trade["message"].edit(embed=embed)
 
-        # ----------------------------------------------------------
-        # 4️⃣ Announce trade completion publicly
-        # ----------------------------------------------------------
         channel = discord.utils.get(guild.text_channels, name="toilet-exchange")
         if channel:
             await channel.send(
-                f"💹 **Trade Completed!** {initiator.mention} and {partner.mention} have finalized their trade!\n"
-                f"✅ Check the updated trade summary above."
+                f"💹 **Trade Completed!** {initiator.mention} and {partner.mention} have finalized their trade!"
             )
 
-        # ----------------------------------------------------------
-        # 5️⃣ Clean up
-        # ----------------------------------------------------------
-        active_trades.pop(initiator.id, None)
-        active_trades.pop(partner.id, None)
-
+        # Cleanup
+        active_trades[guild_id].pop(initiator.id, None)
+        active_trades[guild_id].pop(partner.id, None)
 
     async def _trade_fail(self, trade, reason):
-        """Helper for when a trade fails (insufficient funds or stocks)."""
-        embed = discord.Embed(
-            title="❌ Trade Failed",
-            description=reason,
-            color=discord.Color.red()
-        )
+        embed = discord.Embed(title="❌ Trade Failed", description=reason, color=discord.Color.red())
         await trade["message"].edit(embed=embed)
-        initiator_id = [k for k in active_trades.keys() if active_trades[k] == trade][0]
-        partner_id = trade.get("partner_id")
-        active_trades.pop(initiator_id, None)
-        if partner_id:
-            active_trades.pop(partner_id, None)
 
 
 async def setup(bot):
