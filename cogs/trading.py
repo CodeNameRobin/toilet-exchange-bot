@@ -14,6 +14,7 @@ from utils.database import (
 )
 from utils.helpers import dm_and_delete
 from utils.logger import log_error
+from decimal import Decimal, ROUND_HALF_UP
 
 
 class Trading(commands.Cog):
@@ -94,7 +95,9 @@ class Trading(commands.Cog):
         if price is None:
             return await dm_and_delete(ctx, "❌ Invalid stock ticker for this server.")
 
-        total_cost = price * qty
+        price_dec = Decimal(str(price)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        qty_dec = Decimal(str(qty))
+        total_cost = (price_dec * qty_dec).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         if float(user[1]) < total_cost:
             return await dm_and_delete(ctx, "❌ Insufficient funds for this purchase.")
 

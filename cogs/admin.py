@@ -326,16 +326,17 @@ class Admin(commands.Cog):
     @commands.command(name="list_settings")
     @bot_admin()
     async def list_settings(self, ctx):
+        print("DEBUG: list_settings called")  # ✅ Add this line
         try:
             settings = await get_server_settings(ctx.guild.id)
             embed = discord.Embed(title=f"Server Settings — {ctx.guild.name}", color=discord.Color.blurple())
             for k, v in settings.items():
                 if k != "guild_id":
                     embed.add_field(name=k.replace("_", " ").title(), value=str(v), inline=False)
-            await dm_and_delete(ctx, embed=embed)
+            await ctx.send(embed=embed)
+            print("DEBUG: sent embed")
         except Exception as e:
-            await log_event("ERROR", "List settings failed", ctx, e)
-
+            print("DEBUG: list_settings error", e)
     @commands.command(name="set_setting")
     @bot_admin()
     async def set_setting(self, ctx, setting: str = None, *, value: str = None):
@@ -347,7 +348,14 @@ class Admin(commands.Cog):
                 valid = ", ".join([k for k in settings.keys() if k != "guild_id"])
                 return await dm_and_delete(ctx, f"❌ Invalid setting. Options: {valid}")
             try:
-                if "." in value:
+                if setting == "secret_profiles":
+                    if value.lower() in ("on", "true", "1"):
+                        cast_value = 1
+                    elif value.lower() in ("off", "false", "0"):
+                        cast_value = 0
+                    else:
+                        return await dm_and_delete(ctx, "❌ Use `on` or `off` for secret_profiles.")
+                elif "." in value:
                     cast_value = float(value)
                 elif value.isdigit():
                     cast_value = int(value)

@@ -1,25 +1,38 @@
 import discord
 from discord.ext import commands
 
-async def dm_and_delete(ctx, message: str = None, embed=None):
-    """DMs the user (message, embed, or both) and deletes their original command message."""
-    try:
-        if embed and message:
-            await ctx.author.send(content=message, embed=embed)
-        elif embed:
-            await ctx.author.send(embed=embed)
-        elif message:
-            await ctx.author.send(message)
-        else:
-            # nothing to send — silently ignore
-            return
-    except discord.Forbidden:
-        await ctx.send(f"{ctx.author.mention}, I couldn’t DM you. Please enable DMs.", delete_after=5)
+from utils.database import get_server_settings
 
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        pass
+
+async def dm_and_delete(ctx, message=None, embed=None):
+    """Send a DM if secret profiles are ON, otherwise post publicly."""
+    settings = await get_server_settings(ctx.guild.id)
+    secret_raw = settings.get("secret_profiles", 1)
+
+    # Normalize value safely
+    secret = 1 if str(secret_raw).lower() in ("1", "true", "on") else 0
+
+    # If secret profiles are ON
+    if secret:
+        try:
+            if message:
+                await ctx.author.send(message)
+            if embed:
+                await ctx.author.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.send("⚠️ I can’t DM you. Please enable DMs or turn off secret_profiles.")
+        finally:
+            # Delete the original command message (if possible)
+            try:
+                await ctx.message.delete()
+            except discord.Forbidden:
+                pass
+    else:
+        # Public mode — just send to the same channel
+        if message:
+            await ctx.send(message)
+        if embed:
+            await ctx.send(embed=embed)
 
 async def resolve_member(bot, ctx, user_text: str):
     """Resolve a member by mention, ID, exact or partial name. Requires members intent."""

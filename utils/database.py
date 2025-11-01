@@ -117,6 +117,7 @@ async def init_db():
             leaderboard_update_rate INTEGER DEFAULT 10,  -- minutes
             market_update_rate INTEGER DEFAULT 1,        -- minutes
             starting_money REAL DEFAULT 1000.0,
+            secret_profiles INTEGER DEFAULT 1,  -- 1 = on (DM + delete), 0 = off (public)
             market_bias REAL DEFAULT 0.0008,
             target_price REAL DEFAULT 100.0
         );
@@ -174,6 +175,10 @@ async def create_user(discord_id, guild_id):
 
 
 async def update_balance(discord_id, guild_id, delta):
+    # Ensure SQLite gets a float, not Decimal
+    if not isinstance(delta, (int, float)):
+        delta = float(delta)
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE users SET cash = cash + ? WHERE discord_id=? AND guild_id=?",

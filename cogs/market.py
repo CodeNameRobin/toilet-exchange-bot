@@ -75,7 +75,7 @@ class Market(commands.Cog):
 
                 await db.execute(
                     "UPDATE stocks SET price=? WHERE ticker=? AND guild_id=?",
-                    (new_price, ticker, guild_id),
+                    (round(new_price, 6), ticker, guild_id),
                 )
                 await db.execute(
                     "INSERT INTO price_history (ticker, guild_id, price) VALUES (?, ?, ?)",
