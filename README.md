@@ -17,6 +17,7 @@ Prices move automatically. Fortunes rise and fall. You might become the richest 
 -  **Player Trading** – Trade directly with other users.  
 -  **Admin Tools** – Server admins can add/remove stocks, trigger market crashes, and tweak settings.  
 
+
 ---
 
 ## 💬 Commands
