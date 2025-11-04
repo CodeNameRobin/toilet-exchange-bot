@@ -189,7 +189,7 @@ class Market(commands.Cog):
         channel = discord.utils.get(guild.text_channels, name="toilet-exchange")
         if channel:
             try:
-                await channel.send(" Testing Testing WTF pipelines are hard.The market has been updated! Check new prices with `!stocks`.")
+                await channel.send("The market has been updated! Check new prices with `!stocks`.")
             except discord.Forbidden:
                 print(f"[Market] Missing permission to send message in {guild.name}.")
             except Exception as e:
