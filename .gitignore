@@ -232,4 +232,5 @@ logs/
 cache/
 images/
 charts/
-**data
+**data.env
+data/market.db
