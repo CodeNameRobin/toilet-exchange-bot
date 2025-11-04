@@ -1,0 +1,38 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Copy files to AWS server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          source: "."
+          target: "~/toilet-exchange-bot"
+          rm: false
+          overwrite: true
+          exclude: ".env,data/market.db,.git,.github"
+
+      - name: SSH and restart bot
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            cd ~/toilet-exchange-bot
+            git pull origin main
+            source venv/bin/activate
+            pm2 restart bot || pm2 start bot.py --name "bot"
