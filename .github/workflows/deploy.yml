@@ -24,8 +24,7 @@ jobs:
           key: ${{ secrets.AWS_SSH_KEY }}
           source: "."
           target: "~/toilet-exchange-bot"
-          rm: false
-
+          
       - name: SSH and restart bot
         uses: appleboy/ssh-action@v0.1.10
         with:
