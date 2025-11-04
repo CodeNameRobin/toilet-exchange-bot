@@ -13,18 +13,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
+      - name: Remove .git folder before deploy
+        run: rm -rf .git
+
       - name: Copy files to AWS server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.AWS_HOST }}
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
-          source: "./*"
+          source: "./"
           target: "~/toilet-exchange-bot"
           rm: false
           overwrite: true
           strip_components: 0
-          tar_exec: "tar --exclude='.git'"
 
       - name: SSH and restart bot
         uses: appleboy/ssh-action@v0.1.10
