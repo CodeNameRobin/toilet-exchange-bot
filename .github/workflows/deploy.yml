@@ -37,17 +37,11 @@ jobs:
           script: |
             cd ~/toilet-exchange-bot
             sudo chown -R ec2-user:ec2-user .
-
-            # Ensure venv exists
             if [ ! -d ".venv" ]; then
               python3.11 -m venv .venv
             fi
-
+            
             source .venv/bin/activate
             pip install -r requirements.txt
-
-            # Add pm2 to PATH (both possible global locations)
-            export PATH=$PATH:/usr/bin:/usr/local/bin
-
-            # Restart or start the bot
-            pm2 restart bot || pm2 start bot.py --name "bot" --interpreter python3.11
+            sudo systemctl restart toilet-exchange
+            sudo systemctl status toilet-exchange --no-pager -l
