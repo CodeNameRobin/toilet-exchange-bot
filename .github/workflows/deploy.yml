@@ -32,6 +32,10 @@ jobs:
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
             cd ~/toilet-exchange-bot
-            git pull origin main
-            source venv/bin/activate
-            pm2 restart bot || pm2 start bot.py --name "bot"
+            # fix ownership if needed
+            sudo chown -R ec2-user:ec2-user .
+            # update repo and restart bot
+            git fetch origin main || true
+            git reset --hard origin/main || true
+            source venv/bin/activate || true
+            pm2 restart bot || pm2 start bot.py --name "bot" --interpreter python3.11
