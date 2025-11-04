@@ -1,0 +1,11 @@
+v1.2.0
+Toilet Exchange Patch Notes
+
+💹 Market & Economy
+• Added adaptive median pricing for dynamic market balancing
+• Stocks now self-stabilize without drifting toward a fixed target
+• Missed updates are caught up automatically after restarts
+
+⚙️ Stability & Backend
+• Market no longer updates immediately after reboot
+• Minor bug fixes and precision improvements

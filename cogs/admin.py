@@ -106,7 +106,7 @@ class Admin(commands.Cog):
     @commands.command(name="add_admin")
     @bot_admin()
     async def add_admin_cmd(self, ctx, member: discord.Member):
-        """Add a user as a Toilet Exchange admin for this server."""
+        """Add a user as a Toilet Exchange admin for this server. !add_admin @username"""
         await add_admin(member.id, ctx.guild.id, added_by=ctx.author.id)
         await dm_and_delete(ctx, f"✅ {member.display_name} added as a Toilet Exchange admin.")
         await log_event("INFO", f"Added {member} as admin", ctx)
@@ -114,7 +114,7 @@ class Admin(commands.Cog):
     @commands.command(name="remove_admin")
     @bot_admin()
     async def remove_admin_cmd(self, ctx, member: discord.Member):
-        """Remove a user’s Toilet Exchange admin rights."""
+        """Remove a user’s Toilet Exchange admin rights. !remove_admin @username"""
         await remove_admin(member.id, ctx.guild.id)
         await dm_and_delete(ctx, f"🗑️ {member.display_name} removed from admin list.")
         await log_event("INFO", f"Removed {member} from admin list", ctx)
@@ -122,7 +122,7 @@ class Admin(commands.Cog):
     @commands.command(name="list_admins")
     @bot_admin()
     async def list_admins_cmd(self, ctx):
-        """List all Toilet Exchange admins for this server."""
+        """List all Toilet Exchange admins for this server. !list_admins"""
         admins = await list_admins(ctx.guild.id)
         if not admins:
             return await dm_and_delete(ctx, "No custom admins found for this server.")
@@ -142,8 +142,9 @@ class Admin(commands.Cog):
     @commands.command(name="add_stock")
     @bot_admin()
     async def add_stock(self, ctx, ticker: str = None, *, rest: str = None):
+        """Add stock to market. !add stock <ticker> <stock name> <risk level>"""
         if not ticker or not rest:
-            return await dm_and_delete(ctx, "❌ Usage: `!add_stock GMD \"GOMADINC\" 150.25 high`")
+            return await dm_and_delete(ctx, "❌ Usage: `!add_stock GMD GOMADINC 150.25 high`")
         try:
             parts = rest.split()
             possible_risk = parts[-1].lower() if parts else "moderate"
@@ -190,6 +191,7 @@ class Admin(commands.Cog):
     @commands.command(name="set_risk")
     @bot_admin()
     async def set_risk(self, ctx, ticker: str, risk: str):
+        """Change risk level of a stock. !set_risk <ticker> <risk level>"""
         risk = risk.lower()
         if risk not in ("low", "moderate", "high"):
             return await dm_and_delete(ctx, "❌ Invalid risk level.")
@@ -210,6 +212,7 @@ class Admin(commands.Cog):
     @commands.command(name="remove_stock")
     @bot_admin()
     async def remove_stock(self, ctx, ticker: str):
+        """Remove a stock from the market. !remove_stock <TICKER>"""
         ticker = ticker.upper()
         try:
             async with aiosqlite.connect(DB_PATH) as db:
@@ -256,6 +259,7 @@ class Admin(commands.Cog):
     @commands.command(name="reset_stocks")
     @bot_admin()
     async def reset_stocks(self, ctx):
+        """Reset all stocks in the market to the original values. -- will be updated to keep added and removed stocks as well"""
         try:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("DELETE FROM stocks WHERE guild_id=?", (str(ctx.guild.id),))
@@ -276,6 +280,7 @@ class Admin(commands.Cog):
     @commands.command(name="market_crash")
     @bot_admin()
     async def market_crash(self, ctx):
+        """Start a market crash! Can only be used once per calendar year."""
         year = datetime.datetime.now().year
         try:
             async with aiosqlite.connect(DB_PATH) as db:
@@ -326,6 +331,7 @@ class Admin(commands.Cog):
     @commands.command(name="list_settings")
     @bot_admin()
     async def list_settings(self, ctx):
+        """Lists all editable setting for the server."""
         print("DEBUG: list_settings called")  # ✅ Add this line
         try:
             settings = await get_server_settings(ctx.guild.id)
@@ -340,6 +346,7 @@ class Admin(commands.Cog):
     @commands.command(name="set_setting")
     @bot_admin()
     async def set_setting(self, ctx, setting: str = None, *, value: str = None):
+        """Set settings for the server. !set_setting <setting_name> <setting change>"""
         if not setting or value is None:
             return await dm_and_delete(ctx, "❌ Usage: `!set_setting <setting> <value>`")
         try:
