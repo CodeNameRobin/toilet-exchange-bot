@@ -24,7 +24,7 @@ class Market(commands.Cog):
         """Runs after bot startup: sends patch notes and checks for missed updates."""
         print("[Market] Checking for missed updates and sending patch notes...")
 
-        # Try to load patch notes from VERSION.txt
+        # Load patch notes
         try:
             with open("VERSION.txt", "r", encoding="utf-8") as f:
                 patch_message = f.read().strip()
@@ -35,34 +35,25 @@ class Market(commands.Cog):
 
         for guild in self.bot.guilds:
             settings = await get_server_settings(guild.id)
-            rate = int(settings.get("market_update_rate", 1))  # hours
+            rate = int(settings.get("market_update_rate", 1))  # in hours
 
-            # Check last update time
+            last_time = None
             async with aiosqlite.connect(DB_PATH) as db:
                 cur = await db.execute(
                     "SELECT MAX(timestamp) FROM price_history WHERE guild_id=?",
                     (str(guild.id),)
                 )
-                last_update = await cur.fetchone()
-                last_time = None
-                if last_update and last_update[0]:
+                row = await cur.fetchone()
+                if row and row[0]:
                     try:
-                        last_time = discord.utils.parse_time(last_update[0])
+                        # ensure timezone-aware UTC
+                        last_time = datetime.datetime.fromisoformat(row[0])
+                        if last_time.tzinfo is None:
+                            last_time = last_time.replace(tzinfo=datetime.timezone.utc)
                     except Exception:
-                        pass
+                        last_time = None
 
-            missed_update = False
-            if last_time:
-                if now.tzinfo is None:
-                    now = now.replace(tzinfo=datetime.timezone.utc)
-                if last_time.tzinfo is None:
-                    last_time = last_time.replace(tzinfo=datetime.timezone.utc)
-
-                elapsed = (now - last_time).total_seconds() / 3600
-                if elapsed >= rate:
-                    missed_update = True
-
-            # Send patch notes to channel
+            # Always send patch message, but skip update unless it's really overdue
             channel = discord.utils.get(guild.text_channels, name="toilet-exchange")
             if channel:
                 try:
@@ -70,11 +61,18 @@ class Market(commands.Cog):
                 except Exception as e:
                     print(f"[Market] Could not send startup message in {guild.name}: {e}")
 
-            # Perform catch-up update only if missed
-            if missed_update:
-                print(f"[Market] Missed update detected for {guild.name}, catching up now...")
-                await self._update_prices_for_guild(guild, settings)
-                self._last_market_update[guild.id] = now
+            # Only catch up if clearly overdue
+            if last_time:
+                elapsed_hours = (now - last_time).total_seconds() / 3600
+                if elapsed_hours >= rate:
+                    print(
+                        f"[Market] Missed update detected for {guild.name} ({elapsed_hours:.1f}h old), catching up now...")
+                    await self._update_prices_for_guild(guild, settings)
+                    self._last_market_update[guild.id] = now
+                else:
+                    print(f"[Market] {guild.name} is up to date ({elapsed_hours:.1f}h since last update).")
+            else:
+                print(f"[Market] No prior updates found for {guild.name}; skipping startup update.")
 
     def cog_unload(self):
         self.update_market_loop.cancel()
