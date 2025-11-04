@@ -9,6 +9,8 @@ from discord.ext import commands, tasks
 from utils.database import DB_PATH, get_moving_average, get_server_settings
 from utils.helpers import get_price_change_range
 from utils.logger import log_error
+import datetime
+
 
 
 class Market(commands.Cog):
