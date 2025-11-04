@@ -35,11 +35,19 @@ jobs:
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
-            sudo chown -R ec2-user:ec2-user ~/toilet-exchange-bot
             cd ~/toilet-exchange-bot
+            sudo chown -R ec2-user:ec2-user .
 
-            git fetch origin main || true
-            git reset --hard origin/main || true
-            source .venv/bin/activate || true
-            export PATH=$PATH:/usr/local/bin
+            # Ensure venv exists
+            if [ ! -d ".venv" ]; then
+              python3.11 -m venv .venv
+            fi
+
+            source .venv/bin/activate
+            pip install -r requirements.txt
+
+            # Add pm2 to PATH (both possible global locations)
+            export PATH=$PATH:/usr/bin:/usr/local/bin
+
+            # Restart or start the bot
             pm2 restart bot || pm2 start bot.py --name "bot" --interpreter python3.11
