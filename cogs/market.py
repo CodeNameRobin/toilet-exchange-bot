@@ -96,7 +96,23 @@ class Market(commands.Cog):
                 rate = int(settings.get("market_update_rate", 1))  # in hours
                 last = self._last_market_update.get(guild.id)
 
-                if not last or (now - last).total_seconds() >= rate * 3600:
+                # Load last update directly from DB instead of in-memory
+                async with aiosqlite.connect(DB_PATH) as db:
+                    cur = await db.execute(
+                        "SELECT MAX(timestamp) FROM price_history WHERE guild_id=?",
+                        (str(guild.id),)
+                    )
+                    row = await cur.fetchone()
+                last_update_time = None
+                if row and row[0]:
+                    try:
+                        last_update_time = datetime.datetime.fromisoformat(row[0])
+                        if last_update_time.tzinfo is None:
+                            last_update_time = last_update_time.replace(tzinfo=datetime.timezone.utc)
+                    except Exception:
+                        pass
+
+                if not last_update_time or (now - last_update_time).total_seconds() >= rate * 3600:
                     await self._update_prices_for_guild(guild, settings)
                     self._last_market_update[guild.id] = now
                     print(f"[Market] Updated prices for {guild.name} (every {rate}h)")
