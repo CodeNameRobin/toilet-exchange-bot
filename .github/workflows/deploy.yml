@@ -24,13 +24,13 @@ jobs:
           key: ${{ secrets.AWS_KEY }}
           source: "."
           target: "~/toilet-exchange-bot"
-          rm: true
+          rm: false
 
       - name: SSH and restart bot
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.AWS_HOST }}
-          username: ${{ secrets.AWS_USER }}
+          username: ec2-user
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
             cd ~/toilet-exchange-bot
@@ -40,6 +40,9 @@ jobs:
             fi
             
             source .venv/bin/activate
+            
             pip install -r requirements.txt
+            
+            sudo systemctl daemon-reload
             sudo systemctl restart toilet-exchange
             sudo systemctl status toilet-exchange --no-pager -l
