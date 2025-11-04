@@ -31,10 +31,8 @@ jobs:
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
+            sudo chown -R ec2-user:ec2-user ~/toilet-exchange-bot
             cd ~/toilet-exchange-bot
-            # fix ownership if needed
-            sudo chown -R ec2-user:ec2-user .
-            # update repo and restart bot
             git fetch origin main || true
             git reset --hard origin/main || true
             source venv/bin/activate || true
