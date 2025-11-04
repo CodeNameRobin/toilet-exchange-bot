@@ -51,6 +51,11 @@ class Market(commands.Cog):
 
             missed_update = False
             if last_time:
+                if now.tzinfo is None:
+                    now = now.replace(tzinfo=datetime.timezone.utc)
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=datetime.timezone.utc)
+
                 elapsed = (now - last_time).total_seconds() / 3600
                 if elapsed >= rate:
                     missed_update = True
