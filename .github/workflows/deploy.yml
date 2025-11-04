@@ -23,7 +23,6 @@ jobs:
           target: "~/toilet-exchange-bot"
           rm: false
           overwrite: true
-          exclude: ".env,data/market.db,.git,.github"
 
       - name: SSH and restart bot
         uses: appleboy/ssh-action@v0.1.10
