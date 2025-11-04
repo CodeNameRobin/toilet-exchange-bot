@@ -38,11 +38,9 @@ jobs:
             if [ ! -d ".venv" ]; then
               python3.11 -m venv .venv
             fi
-            
             source .venv/bin/activate
-            
             pip install -r requirements.txt
-            
             sudo systemctl daemon-reload
+            sleep 2
             sudo systemctl restart toilet-exchange
             sudo systemctl status toilet-exchange --no-pager -l
