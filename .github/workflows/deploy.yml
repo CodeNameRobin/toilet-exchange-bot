@@ -31,6 +31,7 @@ jobs:
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
+            # Always fix permissions first
             sudo chown -R ec2-user:ec2-user ~/toilet-exchange-bot
             cd ~/toilet-exchange-bot
             git fetch origin main || true
