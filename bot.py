@@ -86,6 +86,7 @@ async def on_ready():
         await ensure_guild_market(guild.id)
 
     await bot.tree.sync()
+    print("Bot deployed successfully!")
     print(f"🚽 Bot ready as {bot.user} | Connected to {len(bot.guilds)} guild(s)")
 
 
